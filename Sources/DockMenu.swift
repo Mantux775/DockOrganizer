@@ -7,6 +7,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Verhindert App Nap – sonst reagieren Tastenkürzel im Hintergrund verzögert.
     private var activity: NSObjectProtocol?
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Im Hintergrund-Modus gar nicht erst mit Dock-Symbol starten
+        if AppBehavior.shared.runInBackground { NSApp.setActivationPolicy(.accessory) }
+    }
+
+    /// App erneut geöffnet (Finder, Spotlight, Launchpad), während sie im Hintergrund läuft → Fenster zeigen.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag { AppBehavior.shared.showMainWindow() }
+        return true
+    }
+
+    /// Fenster schließen beendet die App nicht – Tastenkürzel und Menüleiste laufen weiter.
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         activity = ProcessInfo.processInfo.beginActivity(
             options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],

@@ -28,6 +28,9 @@ final class DockStore: ObservableObject {
     @Published var toast: Toast?
 
     private var tracking = true
+    /// Stand, der gerade wirklich im Dock ist – „Änderungen“ = Abweichung davon.
+    private var baselineItems = ""
+    private var baselineSettings = DockSettings()
 
     init() {
         activeProfileID = UserDefaults.standard.string(forKey: "activeProfile").flatMap(UUID.init(uuidString:))
@@ -40,7 +43,29 @@ final class DockStore: ObservableObject {
         HotkeyManager.shared.register(profiles)
     }
 
-    private func track() { if tracking && !hasChanges { hasChanges = true } }
+    /// Leiste „Nicht angewendete Änderungen“ nur zeigen, wenn sich der Editor wirklich vom Dock unterscheidet
+    /// (nicht schon, wenn etwas verschoben und wieder zurückgeschoben oder ein identisches Profil geöffnet wurde).
+    private func track() {
+        guard tracking else { return }
+        let changed = itemsFingerprint() != baselineItems || settings != baselineSettings
+        if hasChanges != changed { hasChanges = changed }
+    }
+
+    private func markAsInDock() {
+        baselineItems = itemsFingerprint()
+        baselineSettings = settings
+        hasChanges = false
+    }
+
+    /// Alles, was beim Anwenden zählt – ohne den „Profile“-Stapel, der separat verwaltet wird.
+    private func itemsFingerprint() -> String {
+        func fp(_ item: DockItem) -> String {
+            [Self.signature(item), item.label, "\(item.displayAs)", "\(item.showAs)", "\(item.arrangement)"]
+                .joined(separator: "|")
+        }
+        return apps.map(fp).joined(separator: "\n") + "\n--\n"
+            + others.filter { !isSwitcherTile($0) }.map(fp).joined(separator: "\n")
+    }
 
     private func untracked(_ f: () -> Void) {
         tracking = false
@@ -57,7 +82,7 @@ final class DockStore: ObservableObject {
             others = (DockPrefs.get("persistent-others") as? [[String: Any]] ?? []).map { DockItem(raw: $0) }
             settings = DockSettings.current()
         }
-        hasChanges = false
+        markAsInDock()
         openedProfileID = nil
     }
 
@@ -73,6 +98,11 @@ final class DockStore: ObservableObject {
     func showToast(_ text: String, error: Bool = false) {
         let t = Toast(text: text, isError: error)
         toast = t
+        // Fehler auch ohne offenes Fenster sichtbar machen (z. B. nach Wechsel per Tastenkürzel)
+        if error && !NSApp.windows.contains(where: { $0.isVisible && $0.canBecomeMain }) {
+            HUD.shared.show("Dock nicht vollständig übernommen", subtitle: "Bitte erneut anwenden",
+                            symbol: "exclamationmark.triangle")
+        }
         // Fehler (mit Liste fehlender Einträge) länger stehen lassen
         DispatchQueue.main.asyncAfter(deadline: .now() + (error ? 8 : 3)) { [weak self] in
             if self?.toast?.id == t.id { self?.toast = nil }
@@ -86,9 +116,13 @@ final class DockStore: ObservableObject {
         let writeApps = apps.map(\.raw)
         let writeOthers = othersForWriting().map(\.raw)
         let writeSettings = settings.dict
-        hasChanges = false
+        markAsInDock()
+        // Jeder Wechsel bekommt eine Nummer – Prüfungen älterer Wechsel brechen dann ab,
+        // statt ihren (veralteten) Stand noch einmal ins Dock zu schreiben.
+        applyGeneration += 1
         // Zuerst das Dock – Profil speichern, Stapel-Dateien etc. erst danach.
-        writeAndVerify(apps: writeApps, others: writeOthers, settings: writeSettings, message: msg, attempt: 1)
+        writeAndVerify(apps: writeApps, others: writeOthers, settings: writeSettings, message: msg,
+                       attempt: 1, generation: applyGeneration)
         // Ins Profil speichern, dessen Inhalt im Editor stand – nicht in ein anderes, gerade aktives.
         if saveIntoProfile, savesIntoActiveProfile, let id = target?.id { updateProfile(id) }
         if let opened = openedProfileID {
@@ -102,20 +136,52 @@ final class DockStore: ObservableObject {
         DockPrefs.set("persistent-others", others)
         for (k, v) in settings { DockPrefs.set(k, v) }
         DockPrefs.sync()
-        DockPrefs.restartDock()
+        restartDock()
+    }
+
+    private var applyGeneration = 0
+    private var lastRestart = Date.distantPast
+    private var pendingRestart: DispatchWorkItem?
+    /// Mindestabstand zwischen zwei Dock-Neustarts – das Dock braucht so lange zum Hochfahren.
+    private static let restartGap: TimeInterval = 1.0
+
+    /// Dock neu starten – bei schnell aufeinanderfolgenden Wechseln zusammengefasst.
+    /// Wird das Dock beendet, während es noch hochfährt, schreibt es teils seinen alten Stand zurück.
+    /// Die Einstellungen sind schon geschrieben; der verzögerte Neustart liest dann den neuesten Stand.
+    func restartDock() {
+        let wait = Self.restartGap - Date().timeIntervalSince(lastRestart)
+        guard wait > 0 else {
+            pendingRestart?.cancel()
+            pendingRestart = nil
+            lastRestart = Date()
+            DockPrefs.restartDock()
+            return
+        }
+        guard pendingRestart == nil else { return }   // Ein Neustart ist schon geplant
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.pendingRestart = nil
+            self.lastRestart = Date()
+            DockPrefs.restartDock()
+        }
+        pendingRestart = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + wait, execute: work)
     }
 
     /// Schreibt, startet das Dock neu und prüft danach. Das Dock speichert beim Beenden manchmal
     /// seinen alten Stand zurück – dann wird automatisch noch einmal geschrieben.
     private func writeAndVerify(apps: [[String: Any]], others: [[String: Any]], settings: [String: Any],
-                                message: String, attempt: Int) {
+                                message: String, attempt: Int, generation: Int) {
         writeToDock(apps: apps, others: others, settings: settings)
         let expectedApps = apps.map { DockItem(raw: $0) }.map(Self.signature)
         let expectedOthers = others.map { DockItem(raw: $0) }.map(Self.signature)
 
         func check(_ remaining: Int) {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-                guard let self, !self.hasChanges else { return }
+                // Inzwischen neu angewendet oder im Editor geändert → diese Prüfung ist veraltet
+                guard let self, self.applyGeneration == generation, !self.hasChanges else { return }
+                // Neustart noch nicht passiert (zusammengefasst) → etwas später prüfen
+                if self.pendingRestart != nil { check(remaining); return }
                 self.reload()
                 let ok = self.apps.map(Self.signature) == expectedApps
                     && self.others.map(Self.signature) == expectedOthers
@@ -125,7 +191,7 @@ final class DockStore: ObservableObject {
                     check(remaining - 1)          // Dock braucht evtl. noch etwas länger
                 } else if attempt < 2 {
                     self.writeAndVerify(apps: apps, others: others, settings: settings,
-                                        message: message, attempt: attempt + 1)
+                                        message: message, attempt: attempt + 1, generation: generation)
                 } else {
                     let missing = Set(expectedApps + expectedOthers)
                         .subtracting(self.apps.map(Self.signature) + self.others.map(Self.signature))
@@ -147,9 +213,10 @@ final class DockStore: ObservableObject {
 
     func setAutohideNow(_ on: Bool) {
         untracked { settings.autohide = on }
+        baselineSettings.autohide = on   // geht direkt ins Dock → keine offene Änderung
         DockPrefs.set("autohide", on)
         DockPrefs.sync()
-        DockPrefs.restartDock()
+        restartDock()
     }
 
     // MARK: - Bearbeiten

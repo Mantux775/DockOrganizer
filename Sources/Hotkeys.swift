@@ -165,10 +165,11 @@ final class HotkeyManager {
         let store = DockStore.shared
         guard let pid = actions[id], let p = store.profiles.first(where: { $0.id == pid }) else { return }
         if p.id == store.activeProfileID && !store.hasChanges {
-            store.showToast("Profil „\(p.name)“ ist bereits aktiv")
+            HUD.shared.show(p.name, subtitle: "ist bereits aktiv", symbol: "checkmark.circle")
             return
         }
         store.applyProfile(p)
+        HUD.shared.show(p.name, subtitle: "Profil wird angewendet", symbol: "square.stack.3d.up")
     }
 
     // MARK: Belegung prüfen

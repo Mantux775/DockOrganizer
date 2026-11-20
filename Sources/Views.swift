@@ -473,8 +473,9 @@ struct OptionsView: View {
                     }
                 }
             }
+            AppBehaviorSection()
             Section {
-                Text("Änderungen werden erst mit „Auf Dock anwenden“ (⌘S) übernommen. Dabei startet das Dock kurz neu.")
+                Text("Dock-Änderungen werden erst mit „Auf Dock anwenden“ (⌘S) übernommen. Dabei startet das Dock kurz neu.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }

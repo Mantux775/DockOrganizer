@@ -22,11 +22,11 @@ extension DockStore {
         let real = (DockPrefs.get("persistent-others") as? [[String: Any]] ?? []).map { DockItem(raw: $0) }
         DockPrefs.set("persistent-others", othersForWriting(real).map(\.raw))
         DockPrefs.sync()
-        DockPrefs.restartDock()
+        restartDock()
         showToast(msg)
     }
 
-    private func isSwitcherTile(_ item: DockItem) -> Bool {
+    func isSwitcherTile(_ item: DockItem) -> Bool {
         guard let url = item.url else { return false }
         return url.standardizedFileURL.path == Self.switcherFolder.standardizedFileURL.path
     }

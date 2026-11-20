@@ -9,7 +9,9 @@ struct DockOrganizerApp: App {
         Window("Dock Organizer", id: "main") {
             ContentView()
                 .environmentObject(store)
+                .environmentObject(AppBehavior.shared)
                 .frame(minWidth: 860, minHeight: 560)
+                .modifier(MainWindowLifecycle())
         }
         .commands {
             CommandGroup(replacing: .newItem) {}
@@ -58,12 +60,31 @@ struct MenuBarContent: View {
         }
         Button("Dock neu starten") { DockPrefs.restartDock() }
         Divider()
+        Toggle("Bei der Anmeldung starten", isOn: Binding(
+            get: { AppBehavior.shared.launchAtLogin },
+            set: { AppBehavior.shared.setLaunchAtLogin($0) }
+        ))
         Button("Dock Organizer öffnen …") {
             openWindow(id: "main")
+            NSApp.setActivationPolicy(.regular)
             NSApp.activate(ignoringOtherApps: true)
         }
         .keyboardShortcut("o")
         Button("Beenden") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
+    }
+}
+
+/// Merkt sich, wie das Hauptfenster neu geöffnet wird, und schließt es beim Start im Hintergrund-Modus.
+private struct MainWindowLifecycle: ViewModifier {
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
+
+    func body(content: Content) -> some View {
+        content.onAppear {
+            if AppBehavior.shared.mainWindowAppeared(open: { openWindow(id: "main") }) {
+                dismissWindow(id: "main")
+            }
+        }
     }
 }
