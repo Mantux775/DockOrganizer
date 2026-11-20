@@ -16,6 +16,12 @@ enum DockPrefs {
     }
 
     static func restartDock() {
+        // Direkt das Signal senden – schneller als killall als eigenen Prozess zu starten.
+        let docks = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock")
+        if !docks.isEmpty {
+            docks.forEach { kill($0.processIdentifier, SIGTERM) }
+            return
+        }
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
         p.arguments = ["Dock"]
@@ -163,6 +169,8 @@ struct DockProfile: Identifiable {
     var created = Date()
     /// Gesperrte Profile (z. B. das Backup) werden beim Anwenden nicht automatisch überschrieben.
     var locked = false
+    /// Globales Tastenkürzel zum Anwenden
+    var hotkey: Hotkey?
 
     var plist: [String: Any] {
         var d: [String: Any] = [
@@ -170,6 +178,7 @@ struct DockProfile: Identifiable {
             "apps": apps.map(\.raw), "others": others.map(\.raw), "locked": locked,
         ]
         if let settings { d["settings"] = settings.dict }
+        if let hotkey { d["hotkey"] = hotkey.plist }
         return d
     }
 
@@ -186,6 +195,7 @@ struct DockProfile: Identifiable {
         self.settings = (d["settings"] as? [String: Any]).map(DockSettings.init(dict:))
         self.created = d["created"] as? Date ?? Date()
         self.locked = d["locked"] as? Bool ?? (name == "Original (Backup)")
+        self.hotkey = Hotkey(plist: d["hotkey"])
     }
 
     var appCount: Int { apps.filter { !$0.isSpacer }.count }

@@ -4,6 +4,14 @@ import AppKit
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var store: DockStore { DockStore.shared }
+    /// Verhindert App Nap – sonst reagieren Tastenkürzel im Hintergrund verzögert.
+    private var activity: NSObjectProtocol?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        activity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiatedAllowingIdleSystemSleep, .latencyCritical],
+            reason: "Globale Tastenkürzel für Dock-Profile")
+    }
 
     /// Klick auf ein Profil im „Profile“-Stapel öffnet eine .dockprofile-Datei → Profil anwenden.
     func application(_ application: NSApplication, open urls: [URL]) {

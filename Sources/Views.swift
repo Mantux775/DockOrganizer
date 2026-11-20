@@ -10,6 +10,7 @@ struct ContentView: View {
     @EnvironmentObject var store: DockStore
     @State private var selection: SidebarItem? = .editor
     @State private var showNewProfile = false
+    @State private var profileToDelete: DockProfile?
 
     var body: some View {
         NavigationSplitView {
@@ -23,6 +24,9 @@ struct ContentView: View {
                         HStack {
                             Label(p.name, systemImage: "square.stack.3d.up")
                             Spacer()
+                            if let hk = p.hotkey {
+                                Text(hk.display).font(.caption.monospaced()).foregroundStyle(.secondary)
+                            }
                             if p.locked {
                                 Image(systemName: "lock.fill").font(.caption).foregroundStyle(.secondary)
                             }
@@ -35,7 +39,7 @@ struct ContentView: View {
                             Button("Auf Dock anwenden") { store.applyProfile(p) }
                             Button("Exportieren …") { store.exportProfile(p.id) }
                             Divider()
-                            Button("Löschen", role: .destructive) { store.deleteProfile(p.id) }
+                            Button("Löschen …", role: .destructive) { profileToDelete = p }
                         }
                     }
                     .onMove { store.moveProfiles(from: $0, to: $1) }
@@ -68,6 +72,21 @@ struct ContentView: View {
             }
             .safeAreaInset(edge: .bottom) {
                 if store.hasChanges { ChangesBar() }
+            }
+        }
+        .confirmationDialog("Profil „\(profileToDelete?.name ?? "")“ löschen?",
+                            isPresented: Binding(get: { profileToDelete != nil },
+                                                 set: { if !$0 { profileToDelete = nil } })) {
+            Button("Löschen", role: .destructive) {
+                if let p = profileToDelete {
+                    store.deleteProfile(p.id)
+                    if selection == .profile(p.id) { selection = .editor }
+                }
+                profileToDelete = nil
+            }
+        } message: {
+            if profileToDelete?.locked == true {
+                Text("Das Profil ist gesperrt (z. B. dein Backup). Löschen lässt sich nicht rückgängig machen.")
             }
         }
         .sheet(isPresented: $showNewProfile) {
@@ -105,7 +124,7 @@ struct ChangesBar: View {
             Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 1) {
                 Text("Nicht angewendete Änderungen")
-                if store.savesIntoActiveProfile, let p = store.activeProfile {
+                if store.savesIntoActiveProfile, let p = store.editorProfile {
                     Text("Wird auch in Profil „\(p.name)“ gespeichert").font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -254,7 +273,7 @@ struct EditorView: View {
                 .padding(.vertical, 6)
         }
         .navigationTitle("Anordnung")
-        .navigationSubtitle(store.activeProfile.map { "Profil: \($0.name)" + ($0.locked ? " (gesperrt)" : "") } ?? "")
+        .navigationSubtitle(store.editorProfile.map { "Profil: \($0.name)" + ($0.locked ? " (gesperrt)" : "") } ?? "")
         .inspector(isPresented: $showLibrary) {
             AppLibraryView()
                 .inspectorColumnWidth(min: 240, ideal: 280, max: 420)
@@ -473,17 +492,41 @@ struct ProfileDetailView: View {
     @Binding var selection: SidebarItem?
     @State private var confirmDelete = false
     @State private var confirmOverwrite = false
+    @State private var nameDraft = ""
+    @FocusState private var nameFocused: Bool
+
+    private func commitName(_ id: UUID? = nil) {
+        let id = id ?? profileID
+        let original = store.profiles.first(where: { $0.id == id })?.name ?? ""
+        let trimmed = nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            if id == profileID { nameDraft = original }   // Leerer Name → alten wiederherstellen
+        } else {
+            store.renameProfile(id, to: trimmed)
+        }
+    }
+
+    /// Erst beim Bestätigen / Verlassen speichern – nicht bei jedem Tastendruck
+    private func nameField(_ p: DockProfile) -> some View {
+        TextField("Name", text: $nameDraft)
+            .textFieldStyle(.plain)
+            .font(.largeTitle.bold())
+            .focused($nameFocused)
+            .onSubmit { commitName() }
+            .onChange(of: nameFocused) { _, focused in if !focused { commitName() } }
+            .onAppear { nameDraft = p.name }
+            .onChange(of: profileID) { old, new in
+                commitName(old)
+                nameDraft = store.profiles.first(where: { $0.id == new })?.name ?? ""
+            }
+            .onDisappear { commitName() }
+    }
 
     var body: some View {
         if let p = store.profiles.first(where: { $0.id == profileID }) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
-                    TextField("Name", text: Binding(
-                        get: { store.profiles.first(where: { $0.id == profileID })?.name ?? "" },
-                        set: { store.renameProfile(profileID, to: $0) }
-                    ))
-                    .textFieldStyle(.plain)
-                    .font(.largeTitle.bold())
+                    nameField(p)
 
                     Text("\(p.appCount) Apps · \(p.otherCount) Ordner/Dokumente · erstellt \(p.created.formatted(date: .abbreviated, time: .shortened))")
                         .foregroundStyle(.secondary)
@@ -493,6 +536,8 @@ struct ProfileDetailView: View {
                     Toggle(isOn: Binding(get: { p.locked }, set: { store.setLocked(p.id, $0) })) {
                         Text("Gesperrt – Änderungen im Editor nicht automatisch in dieses Profil speichern")
                     }
+
+                    HotkeyPicker(profileID: p.id)
 
                     HStack {
                         Button {
@@ -504,7 +549,7 @@ struct ProfileDetailView: View {
                         .controlSize(.large)
 
                         Button("Im Editor öffnen") {
-                            store.loadIntoEditor(p)
+                            store.openInEditor(p)
                             selection = .editor
                         }
                         .controlSize(.large)

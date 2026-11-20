@@ -14,7 +14,16 @@ extension DockStore {
         objectWillChange.send()
         UserDefaults.standard.set(on, forKey: "switcherEnabled")
         syncSwitcherFiles()
-        apply(message: on ? "„Profile“-Stapel zum Dock hinzugefügt" : "„Profile“-Stapel entfernt")
+        let msg = on ? "„Profile“-Stapel zum Dock hinzugefügt" : "„Profile“-Stapel entfernt"
+        guard hasChanges else { apply(message: msg); return }
+        // Ungespeicherte Editor-Änderungen nicht nebenbei ins Dock schreiben:
+        // nur den Stapel im echten Dock ergänzen bzw. entfernen.
+        DockPrefs.sync()
+        let real = (DockPrefs.get("persistent-others") as? [[String: Any]] ?? []).map { DockItem(raw: $0) }
+        DockPrefs.set("persistent-others", othersForWriting(real).map(\.raw))
+        DockPrefs.sync()
+        DockPrefs.restartDock()
+        showToast(msg)
     }
 
     private func isSwitcherTile(_ item: DockItem) -> Bool {
@@ -23,7 +32,8 @@ extension DockStore {
     }
 
     /// Stapel beim Schreiben ergänzen bzw. entfernen – unabhängig vom jeweiligen Profil.
-    func othersForWriting() -> [DockItem] {
+    func othersForWriting(_ items: [DockItem]? = nil) -> [DockItem] {
+        let others = items ?? self.others
         var result = others.filter { !isSwitcherTile($0) }
         if switcherEnabled {
             var tile = DockItem.folder(Self.switcherFolder)

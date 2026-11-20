@@ -1,5 +1,8 @@
 import AppKit
 import UniformTypeIdentifiers
+import os
+
+let dockLog = Logger(subsystem: "local.dockorganizer", category: "dock")
 
 @MainActor
 final class DockStore: ObservableObject {
@@ -34,6 +37,7 @@ final class DockStore: ObservableObject {
             let p = saveProfile(name: "Original (Backup)")
             setLocked(p.id, true)
         }
+        HotkeyManager.shared.register(profiles)
     }
 
     private func track() { if tracking && !hasChanges { hasChanges = true } }
@@ -54,41 +58,91 @@ final class DockStore: ObservableObject {
             settings = DockSettings.current()
         }
         hasChanges = false
+        openedProfileID = nil
     }
 
     var activeProfile: DockProfile? { profiles.first { $0.id == activeProfileID } }
 
+    /// Profil, dessen Inhalt gerade im Editor steht („Im Editor öffnen“) – sonst das aktive.
+    @Published private(set) var openedProfileID: UUID?
+    var editorProfile: DockProfile? { profiles.first { $0.id == (openedProfileID ?? activeProfileID) } }
+
     /// Wird beim Anwenden in dieses Profil gespeichert?
-    var savesIntoActiveProfile: Bool { activeProfile.map { !$0.locked } ?? false }
+    var savesIntoActiveProfile: Bool { editorProfile.map { !$0.locked } ?? false }
 
     func showToast(_ text: String, error: Bool = false) {
         let t = Toast(text: text, isError: error)
         toast = t
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+        // Fehler (mit Liste fehlender Einträge) länger stehen lassen
+        DispatchQueue.main.asyncAfter(deadline: .now() + (error ? 8 : 3)) { [weak self] in
             if self?.toast?.id == t.id { self?.toast = nil }
         }
     }
 
-    func apply(message: String? = nil) {
-        if savesIntoActiveProfile, let id = activeProfileID { updateProfile(id) }
-        let expectedApps = apps.count, expectedOthers = others.count
-        let msg = message ?? (savesIntoActiveProfile ? "Dock aktualisiert · gespeichert in „\(activeProfile!.name)“" : "Dock aktualisiert")
-        DockPrefs.set("persistent-apps", apps.map(\.raw))
-        DockPrefs.set("persistent-others", othersForWriting().map(\.raw))
-        for (k, v) in settings.dict { DockPrefs.set(k, v) }
+    func apply(message: String? = nil, saveIntoProfile: Bool = true) {
+        let target = editorProfile
+        let msg = message ?? (savesIntoActiveProfile ? "Dock aktualisiert · gespeichert in „\(target!.name)“" : "Dock aktualisiert")
+        // Genau das, was ins Dock geschrieben wird (inkl. „Profile“-Stapel) – danach wird dagegen geprüft.
+        let writeApps = apps.map(\.raw)
+        let writeOthers = othersForWriting().map(\.raw)
+        let writeSettings = settings.dict
+        hasChanges = false
+        // Zuerst das Dock – Profil speichern, Stapel-Dateien etc. erst danach.
+        writeAndVerify(apps: writeApps, others: writeOthers, settings: writeSettings, message: msg, attempt: 1)
+        // Ins Profil speichern, dessen Inhalt im Editor stand – nicht in ein anderes, gerade aktives.
+        if saveIntoProfile, savesIntoActiveProfile, let id = target?.id { updateProfile(id) }
+        if let opened = openedProfileID {
+            openedProfileID = nil
+            activeProfileID = opened   // Das Dock zeigt jetzt dieses Profil
+        }
+    }
+
+    private func writeToDock(apps: [[String: Any]], others: [[String: Any]], settings: [String: Any]) {
+        DockPrefs.set("persistent-apps", apps)
+        DockPrefs.set("persistent-others", others)
+        for (k, v) in settings { DockPrefs.set(k, v) }
         DockPrefs.sync()
         DockPrefs.restartDock()
-        hasChanges = false
-        // Das Dock schreibt nach dem Neustart GUIDs etc. zurück → danach neu einlesen.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) { [weak self] in
-            guard let self, !self.hasChanges else { return }
-            self.reload()
-            if self.apps.count == expectedApps && self.others.count == expectedOthers {
-                self.showToast(msg)
-            } else {
-                self.showToast("Das Dock hat die Änderung nicht vollständig übernommen – bitte erneut anwenden.", error: true)
+    }
+
+    /// Schreibt, startet das Dock neu und prüft danach. Das Dock speichert beim Beenden manchmal
+    /// seinen alten Stand zurück – dann wird automatisch noch einmal geschrieben.
+    private func writeAndVerify(apps: [[String: Any]], others: [[String: Any]], settings: [String: Any],
+                                message: String, attempt: Int) {
+        writeToDock(apps: apps, others: others, settings: settings)
+        let expectedApps = apps.map { DockItem(raw: $0) }.map(Self.signature)
+        let expectedOthers = others.map { DockItem(raw: $0) }.map(Self.signature)
+
+        func check(_ remaining: Int) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                guard let self, !self.hasChanges else { return }
+                self.reload()
+                let ok = self.apps.map(Self.signature) == expectedApps
+                    && self.others.map(Self.signature) == expectedOthers
+                if ok {
+                    self.showToast(message)
+                } else if remaining > 0 {
+                    check(remaining - 1)          // Dock braucht evtl. noch etwas länger
+                } else if attempt < 2 {
+                    self.writeAndVerify(apps: apps, others: others, settings: settings,
+                                        message: message, attempt: attempt + 1)
+                } else {
+                    let missing = Set(expectedApps + expectedOthers)
+                        .subtracting(self.apps.map(Self.signature) + self.others.map(Self.signature))
+                    let names = (apps + others).map { DockItem(raw: $0) }
+                        .filter { missing.contains(Self.signature($0)) }.map(\.label)
+                    let detail = names.isEmpty ? "" : " Fehlt: " + names.prefix(3).joined(separator: ", ")
+                        + (names.count > 3 ? " …" : "")
+                    self.showToast("Das Dock hat die Änderung nicht vollständig übernommen – bitte erneut anwenden.\(detail)", error: true)
+                }
             }
         }
+        check(2)
+    }
+
+    /// Vergleichswert eines Eintrags – unabhängig von GUIDs, die das Dock beim Neustart ergänzt.
+    private static func signature(_ item: DockItem) -> String {
+        item.tileType + "|" + (item.url?.standardizedFileURL.path ?? item.label)
     }
 
     func setAutohideNow(_ on: Bool) {
@@ -219,6 +273,7 @@ final class DockStore: ObservableObject {
             try? data.write(to: profilesURL, options: .atomic)
         }
         syncSwitcherFiles()
+        HotkeyManager.shared.register(profiles)
     }
 
     @discardableResult
@@ -239,7 +294,8 @@ final class DockStore: ObservableObject {
     }
 
     func renameProfile(_ id: UUID, to name: String) {
-        guard let i = profiles.firstIndex(where: { $0.id == id }) else { return }
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, let i = profiles.firstIndex(where: { $0.id == id }), profiles[i].name != name else { return }
         profiles[i].name = name
         saveProfiles()
     }
@@ -256,6 +312,7 @@ final class DockStore: ObservableObject {
     func deleteProfile(_ id: UUID) {
         profiles.removeAll { $0.id == id }
         if activeProfileID == id { activeProfileID = nil }
+        if openedProfileID == id { openedProfileID = nil }
         saveProfiles()
     }
 
@@ -301,10 +358,32 @@ final class DockStore: ObservableObject {
         if let s = p.settings { settings = s }
     }
 
-    func applyProfile(_ p: DockProfile) {
+    /// Profil zum Bearbeiten in den Editor holen – Anwenden speichert dann in genau dieses Profil.
+    func openInEditor(_ p: DockProfile) {
         loadIntoEditor(p)
+        openedProfileID = p.id
+    }
+
+    func applyProfile(_ p: DockProfile) {
+        let start = Date()
+        openedProfileID = nil
+        // Editor-Stand setzen, ohne dass activeProfileID schon Dateien anfasst
+        untracked { loadIntoEditor(p) }
+        // Das Profil selbst ist schon der gespeicherte Stand → nicht zurückschreiben
+        apply(message: "Profil „\(p.name)“ angewendet", saveIntoProfile: false)
+        dockLog.notice("Profil \(p.name, privacy: .public): Dock neu gestartet nach \(Int(Date().timeIntervalSince(start) * 1000)) ms")
         activeProfileID = p.id
-        apply(message: "Profil „\(p.name)“ angewendet")
+    }
+
+    func setHotkey(_ id: UUID, _ hotkey: Hotkey?) {
+        guard let i = profiles.firstIndex(where: { $0.id == id }) else { return }
+        if let hotkey {
+            // Ein Kürzel gehört immer nur einem Profil
+            for j in profiles.indices where profiles[j].hotkey == hotkey { profiles[j].hotkey = nil }
+        }
+        profiles[i].hotkey = hotkey
+        saveProfiles()
+        if let hotkey { showToast("\(hotkey.display) wendet jetzt „\(profiles[i].name)“ an") }
     }
 
     func setLocked(_ id: UUID, _ locked: Bool) {
@@ -335,6 +414,7 @@ final class DockStore: ObservableObject {
         else { return nil }
         p.id = UUID()
         p.locked = false
+        p.hotkey = nil
         profiles.append(p)
         saveProfiles()
         return p
