@@ -27,14 +27,31 @@ Eine macOS-App, mit der du dein Dock ordnest und zwischen verschiedenen Anordnun
 - Bei der Anmeldung automatisch starten
 - Im Hintergrund ausführen: kein Symbol im Dock, nur das Menüleisten-Symbol; Tastenkürzel funktionieren weiter
 
-## Voraussetzungen
+## Download
+
+**[⬇ Dock Organizer herunterladen](https://github.com/isisasch-art/DockOrganizer/releases/latest)**: unter *Assets* die Datei `DockOrganizer-1.0.zip` laden.
 
 - macOS 14 (Sonoma) oder neuer
-- Zum Bauen: Xcode bzw. die Xcode Command Line Tools (Swift 5.9 oder neuer, `actool` für das App-Symbol)
+- läuft auf Apple Silicon und Intel-Macs
 
-Es gibt noch keine fertige, signierte App zum Herunterladen. Du baust die App selbst aus dem Quellcode.
+### Installieren
 
-## Bauen und installieren
+1. ZIP doppelklicken und **Dock Organizer** in den Ordner **Programme** ziehen.
+2. Die App einmal per Doppelklick öffnen. macOS meldet, dass die App nicht geöffnet werden kann bzw. nicht überprüft wurde. Mit **Fertig** bzw. **OK** schließen, *nicht* „In den Papierkorb legen“.
+3. **Systemeinstellungen → Datenschutz & Sicherheit** öffnen, ganz nach unten scrollen und bei „Dock Organizer wurde blockiert …“ auf **Dennoch öffnen** klicken. Mit deinem Passwort oder Touch ID bestätigen.
+4. Ab jetzt startet die App normal.
+
+> [!NOTE]
+> **Warum die Warnung?** Diese Testversion ist nicht mit einem Apple-Entwicklerzertifikat signiert und nicht von Apple beglaubigt (notarisiert). macOS blockiert solche Apps beim ersten Start. Der Quellcode liegt vollständig in diesem Repository. Wer der heruntergeladenen Datei nicht traut, baut die App selbst (siehe unten).
+>
+> Alternative zu Schritt 2 und 3 im Terminal:
+> ```bash
+> xattr -dr com.apple.quarantine "/Applications/Dock Organizer.app"
+> ```
+
+## Selbst bauen
+
+Voraussetzung: Xcode bzw. die Xcode Command Line Tools (Swift 5.9 oder neuer, `actool` für das App-Symbol).
 
 ```bash
 git clone https://github.com/isisasch-art/DockOrganizer.git
@@ -49,9 +66,9 @@ cd DockOrganizer
 ```
 
 Das Skript:
-1. baut die App im Release-Modus,
+1. baut die App im Release-Modus, universell für Apple Silicon und Intel,
 2. erzeugt `build/Dock Organizer.app` samt Symbol,
-3. signiert sie: mit einem „Developer ID Application“-Zertifikat, falls eins im Schlüsselbund liegt, sonst nur ad hoc (die App läuft dann nur auf dem Mac, auf dem sie gebaut wurde),
+3. signiert sie: mit einem „Developer ID Application“-Zertifikat, falls eins im Schlüsselbund liegt, sonst nur ad hoc (auf anderen Macs blockiert macOS sie dann beim ersten Start, siehe „Installieren“),
 4. legt `build/DockOrganizer-1.0.zip` an,
 5. **beendet eine laufende Dock-Organizer-Instanz und ersetzt `/Applications/Dock Organizer.app`**.
 

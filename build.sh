@@ -4,11 +4,14 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 APP="build/Dock Organizer.app"
-swift build -c release
+# Universell: läuft auf Apple Silicon und Intel-Macs
+ARCHS=(--arch arm64 --arch x86_64)
+swift build -c release "${ARCHS[@]}"
+BIN="$(swift build -c release "${ARCHS[@]}" --show-bin-path)"
 
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp .build/release/DockOrganizer "$APP/Contents/MacOS/DockOrganizer"
+cp "$BIN/DockOrganizer" "$APP/Contents/MacOS/DockOrganizer"
 
 # Icon (Icon-Composer-Format mit Hell-/Dunkel-Variante; actool erzeugt Assets.car + AppIcon.icns als Fallback)
 TMP=$(mktemp -d)
