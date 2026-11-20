@@ -29,7 +29,7 @@ Eine macOS-App, mit der du dein Dock ordnest und zwischen verschiedenen Anordnun
 
 ## Download
 
-**[⬇ Dock Organizer herunterladen](https://github.com/isisasch-art/DockOrganizer/releases/latest)**: unter *Assets* die Datei `DockOrganizer-1.0.zip` laden.
+**[⬇ Dock Organizer herunterladen](https://github.com/isisasch-art/DockOrganizer/releases)**: beim neuesten Eintrag unter *Assets* die Datei `DockOrganizer-1.0.zip` laden.
 
 - macOS 14 (Sonoma) oder neuer
 - läuft auf Apple Silicon und Intel-Macs
