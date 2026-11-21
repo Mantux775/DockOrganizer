@@ -95,9 +95,6 @@ Mit `NOTARIZE=1 ./build.sh` wird die App zusätzlich bei Apple notarisiert. Daf�
 
 - **Jeder Wechsel startet das Dock neu.** macOS übernimmt geänderte Dock-Einträge nur nach einem Neustart des Docks. Das dauert je nach Mac und Symbolgröße etwa 0,5 bis 2 Sekunden. Bei sehr schnellen Wechseln hintereinander fasst die App die Neustarts zusammen (höchstens einer pro Sekunde).
 - Meldungen im App-Fenster erscheinen nur, wenn das Fenster offen ist. Ohne offenes Fenster gibt es die Einblendung nur beim Tastenkürzel und bei Fehlern.
-- Ordner und Dokumente lassen sich doppelt hinzufügen (bei Apps wird das verhindert).
-- „Neuer Ordner“ lässt sich auch ohne ausgewählte App anlegen; dann entsteht ein leerer Ordner.
-- Schlägt „Apps in diesen Ordner legen …“ fehl, gibt es keine Meldung.
 - Der Autostart nutzt die Anmeldeobjekte von macOS (`SMAppService`). Mit einer nur ad hoc signierten App ist er noch nicht getestet.
 - Die Oberfläche ist nur auf Deutsch.
 

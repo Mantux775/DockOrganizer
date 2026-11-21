@@ -225,13 +225,16 @@ final class DockStore: ObservableObject {
         for url in urls {
             var isDir: ObjCBool = false
             FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir)
+            let path = url.standardizedFileURL.path
             if url.pathExtension == "app" {
-                guard !apps.contains(where: { $0.url?.standardizedFileURL.path == url.standardizedFileURL.path }) else { continue }
+                guard !apps.contains(where: { $0.url?.standardizedFileURL.path == path }) else { continue }
                 apps.append(.app(url))
-            } else if isDir.boolValue {
-                others.append(.folder(url))
             } else {
-                others.append(.document(url))
+                // Ordner und Dokumente wie Apps nur einmal
+                guard !others.contains(where: { $0.url?.standardizedFileURL.path == path }) else { continue }
+                // Pakete (z. B. Keynote- oder Pages-Dokumente) sind technisch Ordner, gehören aber als Dokument ins Dock
+                let isFolder = isDir.boolValue && !NSWorkspace.shared.isFilePackage(atPath: url.path)
+                others.append(isFolder ? .folder(url) : .document(url))
             }
         }
     }

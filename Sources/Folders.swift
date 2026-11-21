@@ -58,7 +58,11 @@ extension DockStore {
         panel.directoryURL = URL(fileURLWithPath: "/Applications")
         panel.prompt = "In Ordner legen"
         guard panel.runModal() == .OK else { return }
-        try? writeAliases(panel.urls, into: dir)
+        do {
+            try writeAliases(panel.urls, into: dir)
+        } catch {
+            showToast("Apps konnten nicht in den Ordner gelegt werden: \(error.localizedDescription)", error: true)
+        }
     }
 
     private func writeAliases(_ urls: [URL], into dir: URL) throws {
@@ -177,6 +181,8 @@ struct NewFolderSheet: View {
 
             if let error {
                 Text(error).foregroundStyle(.red).font(.callout)
+            } else if chosen.isEmpty {
+                Text("Wähle mindestens eine App für den Ordner aus.").foregroundStyle(.secondary).font(.callout)
             }
 
             HStack {
@@ -188,7 +194,7 @@ struct NewFolderSheet: View {
                 Button("Ordner erstellen", action: create)
                     .keyboardShortcut(.defaultAction)
                     .buttonStyle(.borderedProminent)
-                    .disabled(finalName.isEmpty)
+                    .disabled(finalName.isEmpty || chosen.isEmpty)
             }
         }
         .padding(20)
@@ -200,8 +206,11 @@ struct NewFolderSheet: View {
     private var finalName: String { name.trimmingCharacters(in: .whitespaces) }
 
     private func setup() {
-        var urls = store.apps.compactMap(\.url).filter { $0.pathExtension == "app" }
-        for u in request.preselected where !urls.contains(u) { urls.append(u) }
+        // Jede App nur einmal anbieten – steht sie doppelt im Dock, entstünden sonst zwei Aliasse
+        var urls: [URL] = []
+        for u in store.apps.compactMap(\.url) + request.preselected where u.pathExtension == "app" && !urls.contains(u) {
+            urls.append(u)
+        }
         candidates = urls
         chosen = Set(request.preselected)
         updateSuggestion()
@@ -226,7 +235,8 @@ struct NewFolderSheet: View {
     }
 
     private func create() {
-        guard !finalName.isEmpty else { return }
+        // Ohne gewählte App entstünde ein leerer Ordner (Enter im Namensfeld umgeht den gesperrten Knopf)
+        guard !finalName.isEmpty, !chosen.isEmpty else { return }
         // Reihenfolge wie im Raster beibehalten
         let ordered = candidates.filter { chosen.contains($0) }
         do {
